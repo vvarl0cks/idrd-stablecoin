@@ -88,3 +88,16 @@ Digital Rupiah (IDRD) deployed to: 0x5238B7651dFE2bccb4eAA135352041BB33d5813f
 -   **Contract Name:** `IDRD`
 -   **Deployed Address (BSC Testnet):** `0x5238B7651dFE2bccb4eAA135352041BB33d5813f`
 -   **Block Explorer Link:** [View on BscScan Testnet](https://testnet.bscscan.com/address/0x5238B7651dFE2bccb4eAA135352041BB33d5813f)
+
+### Successful Deployment Log (Latest)
+
+The following output confirms the successful deployment of the updated contract with the public `burn` function.
+```
+gitpod /workspace/idrd-stablecoin (main) $ npx hardhat compile
+Generating typings for: 1 artifacts in dir: typechain-types for target: ethers-v6
+Successfully generated 24 typings!
+Compiled 1 Solidity file successfully (evm target: paris).
+
+gitpod /workspace/idrd-stablecoin (main) $ npx hardhat run scripts/deploy-idrd.ts --network bscTestnet
+Deploying Digital Rupiah (IDRD) contract...
+Digital Rupiah (IDRD) deployed to: 0x6c1870cc0Ab6B824918b81937cCe06E4728

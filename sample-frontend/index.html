@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digital Rupiah (IDRD) dApp</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .btn {
+            @apply px-4 py-2 font-semibold text-white rounded-lg transition-all duration-200 ease-in-out disabled:bg-gray-400 disabled:cursor-not-allowed;
+        }
+        .btn-primary {
+            @apply bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500;
+        }
+        .btn-secondary {
+            @apply bg-gray-600 hover:bg-gray-700;
+        }
+        .btn-ai {
+            @apply bg-purple-600 hover:bg-purple-700 text-sm;
+        }
+        .input-field {
+            @apply w-full px-4 py-3 bg-gray-100 border-2 border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all;
+        }
+        .card {
+            @apply bg-white p-6 md:p-8 rounded-xl shadow-lg border border-gray-100;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+    <div id="root"></div>
+
+    <!-- React and Babel for JSX -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Ethers.js for blockchain interaction -->
+    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js"></script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
+
+        // --- IMPORTANT: PASTE YOUR CONTRACT ADDRESS AND ABI HERE ---
+        const contractAddress = "0x6c1870cc0Ab6B824918b81937cCe06E4728"; 
+        const contractABI = [
+            "function name() view returns (string)",
+            "function symbol() view returns (string)",
+            "function balanceOf(address) view returns (uint)",
+            "function owner() view returns (address)",
+            "function mint(address to, uint256 amount)",
+            "function burn(uint256 amount)",
+            "event Transfer(address indexed from, address indexed to, uint256 value)"
+        ];
+
+        const App = () => {
+            const [provider, setProvider] = useState(null);
+            const [signer, setSigner] = useState(null);
+            const [account, setAccount] = useState(null);
+            const [balance, setBalance] = useState("0");
+            const [isOwner, setIsOwner] = useState(false);
+            const [network, setNetwork] = useState(null);
+            const [notification, setNotification] = useState({ message: '', type: '', show: false });
+            
+            // --- Gemini API State ---
+            const [explainerVisible, setExplainerVisible] = useState(false);
+            const [explanation, setExplanation] = useState('');
+            const [isExplaining, setIsExplaining] = useState(false);
+            const [addressSuggestion, setAddressSuggestion] = useState('');
+            const [isSuggesting, setIsSuggesting] = useState(false);
+
+            // --- Form and Transaction State ---
+            const [mintAddress, setMintAddress] = useState('');
+            const [mintAmount, setMintAmount] = useState('');
+            const [burnAmount, setBurnAmount] = useState('');
+            const [transactions, setTransactions] = useState([]);
+            const [isProcessing, setIsProcessing] = useState(false);
+
+            const BSC_TESTNET_CHAIN_ID = '0x61';
+
+            const showNotification = (message, type = 'info', duration = 5000) => {
+                setNotification({ message, type, show: true });
+                setTimeout(() => setNotification({ message: '', type: '', show: false }), duration);
+            };
+
+            const connectWallet = useCallback(async () => {
+                if (window.ethereum) {
+                    try {
+                        const newProvider = new ethers.providers.Web3Provider(window.ethereum);
+                        await newProvider.send("eth_requestAccounts", []);
+                        const newSigner = newProvider.getSigner();
+                        const newAccount = await newSigner.getAddress();
+                        
+                        setProvider(newProvider);
+                        setSigner(newSigner);
+                        setAccount(newAccount);
+                        showNotification('Wallet connected successfully!', 'success');
+                    } catch (error) {
+                        console.error("Error connecting wallet:", error);
+                        showNotification('Failed to connect wallet.', 'error');
+                    }
+                } else {
+                    showNotification('MetaMask is not installed. Please install it to use this dApp.', 'error');
+                }
+            }, []);
+
+            const checkNetwork = useCallback(async (provider) => {
+                if (!provider) return;
+                const { chainId } = await provider.getNetwork();
+                setNetwork(chainId);
+                if (chainId !== parseInt(BSC_TESTNET_CHAIN_ID, 16)) {
+                    showNotification('Please switch to BNB Smart Chain Testnet.', 'warning');
+                }
+            }, []);
+
+            const getBalance = useCallback(async () => {
+                if (account && provider) {
+                    try {
+                        const contract = new ethers.Contract(contractAddress, contractABI, provider);
+                        const userBalance = await contract.balanceOf(account);
+                        setBalance(ethers.utils.formatUnits(userBalance, 0));
+                    } catch (error) {
+                        console.error("Error fetching balance:", error);
+                        showNotification('Could not fetch balance. Is the contract address correct?', 'error');
+                    }
+                }
+            }, [account, provider]);
+            
+            const checkOwnership = useCallback(async () => {
+                if (account && provider) {
+                    try {
+                        const contract = new ethers.Contract(contractAddress, contractABI, provider);
+                        const ownerAddress = await contract.owner();
+                        setIsOwner(ownerAddress.toLowerCase() === account.toLowerCase());
+                    } catch (error) { console.error("Error checking ownership:", error); }
+                }
+            }, [account, provider]);
+
+            // --- Gemini API Functions ---
+            const handleExplainTransaction = async (tx) => {
+                setIsExplaining(true);
+                setExplanation('');
+                setExplainerVisible(true);
+
+                const { from, to, value, type } = tx;
+                const prompt = `Explain this blockchain transaction in simple, friendly terms for a non-technical user. The transaction type is '${type}'. An amount of ${parseInt(value).toLocaleString()} IDRD tokens moved from wallet address ${from} to wallet address ${to}. Explain what this means in one or two short paragraphs.`;
+                
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                    });
+                    const result = await response.json();
+                    const text = result.candidates[0].content.parts[0].text;
+                    setExplanation(text);
+                } catch (error) {
+                    console.error("Gemini API error:", error);
+                    setExplanation("Sorry, I couldn't explain this transaction right now.");
+                } finally {
+                    setIsExplaining(false);
+                }
+            };
+            
+            const handleSuggestAddress = async () => {
+                if (!addressSuggestion) {
+                    showNotification('Please enter a description for the address.', 'warning');
+                    return;
+                }
+                setIsSuggesting(true);
+                setMintAddress('');
+                const prompt = `You are an assistant for a crypto project. Based on the following description, invent a plausible but clearly fake Ethereum-style wallet address. The address must start with '0x' and be 42 characters long. Description: '${addressSuggestion}'. Only return the address itself, with no other text.`;
+
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                    });
+                    const result = await response.json();
+                    const text = result.candidates[0].content.parts[0].text.trim();
+                    setMintAddress(text);
+                } catch (error) {
+                    console.error("Gemini API error:", error);
+                    showNotification('Could not suggest an address.', 'error');
+                } finally {
+                    setIsSuggesting(false);
+                }
+            };
+
+            useEffect(() => {
+                if (provider && account) {
+                    checkNetwork(provider);
+                    getBalance();
+                    checkOwnership();
+                    
+                    const contract = new ethers.Contract(contractAddress, contractABI, provider);
+                    const filter = contract.filters.Transfer(null, null);
+
+                    contract.on(filter, (from, to, value, event) => {
+                        const isMint = from === ethers.constants.AddressZero;
+                        const isBurn = to === ethers.constants.AddressZero;
+                        let type = isMint ? 'Mint' : isBurn ? 'Burn' : 'Transfer';
+
+                        const newTx = {
+                            hash: event.transactionHash, from, to,
+                            value: ethers.utils.formatUnits(value, 0), type
+                        };
+                        
+                        setTransactions(prev => [newTx, ...prev.slice(0, 4)]);
+                        
+                        if(from.toLowerCase() === account.toLowerCase() || to.toLowerCase() === account.toLowerCase()) {
+                            getBalance();
+                        }
+                    });
+
+                    window.ethereum.on('accountsChanged', () => window.location.reload());
+                    window.ethereum.on('chainChanged', () => window.location.reload());
+
+                    return () => { contract.removeAllListeners(filter); };
+                }
+            }, [account, provider, getBalance, checkOwnership, connectWallet, checkNetwork]);
+
+            const handleMint = async (e) => {
+                e.preventDefault();
+                if (!mintAddress || !mintAmount || !signer) return;
+                
+                setIsProcessing(true);
+                showNotification('Minting in progress...', 'info');
+                try {
+                    const contract = new ethers.Contract(contractAddress, contractABI, signer);
+                    const amountToMint = ethers.utils.parseUnits(mintAmount, 0);
+                    const tx = await contract.mint(mintAddress, amountToMint);
+                    await tx.wait();
+                    showNotification('Minting successful!', 'success');
+                    setMintAmount('');
+                    setMintAddress('');
+                    setAddressSuggestion('');
+                } catch (error) {
+                    showNotification(error?.data?.message || error.message || 'Minting failed.', 'error');
+                } finally {
+                    setIsProcessing(false);
+                }
+            };
+
+            const handleBurn = async (e) => {
+                e.preventDefault();
+                if (!burnAmount || !signer) return;
+
+                setIsProcessing(true);
+                showNotification('Burning in progress...', 'info');
+                try {
+                    const contract = new ethers.Contract(contractAddress, contractABI, signer);
+                    const amountToBurn = ethers.utils.parseUnits(burnAmount, 0);
+                    const tx = await contract.burn(amountToBurn);
+                    await tx.wait();
+                    showNotification('Burning successful!', 'success');
+                    setBurnAmount('');
+                } catch (error) {
+                    showNotification(error?.data?.message || error.message || 'Burning failed.', 'error');
+                } finally {
+                    setIsProcessing(false);
+                }
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-gradient-to-br from-blue-50 to-indigo-100">
+                    {notification.show && (
+                        <div className={`fixed top-5 right-5 p-4 rounded-lg shadow-lg text-white z-50 ${notification.type === 'success' ? 'bg-green-500' : notification.type === 'error' ? 'bg-red-500' : notification.type === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'}`}>
+                            {notification.message}
+                        </div>
+                    )}
+
+                    {explainerVisible && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40 p-4" onClick={() => setExplainerVisible(false)}>
+                            <div className="card max-w-lg w-full" onClick={e => e.stopPropagation()}>
+                                <h3 className="text-2xl font-bold mb-4">✨ Transaction Explained</h3>
+                                {isExplaining ? (
+                                    <div className="flex items-center justify-center h-24">
+                                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500"></div>
+                                    </div>
+                                ) : (
+                                    <p className="text-gray-700 whitespace-pre-wrap">{explanation}</p>
+                                )}
+                                <button onClick={() => setExplainerVisible(false)} className="btn btn-secondary mt-6 w-full">Close</button>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="w-full max-w-6xl mx-auto">
+                        <header className="text-center mb-10">
+                            <h1 className="text-4xl md:text-5xl font-bold text-gray-800">Digital Rupiah (IDRD)</h1>
+                            <p className="text-lg text-gray-600 mt-2">A stablecoin prototype for the Circula project.</p>
+                        </header>
+
+                        {!account ? (
+                            <div className="text-center mt-20">
+                                <button 
+                                    onClick={connectWallet} 
+                                    className="btn btn-primary px-12 py-4 text-xl rounded-xl shadow-lg w-auto"
+                                >
+                                    Connect Wallet
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="grid md:grid-cols-2 gap-8 items-start">
+                                {/* Left Column */}
+                                <div className="space-y-8">
+                                    <div className="card">
+                                        <div>
+                                            <h2 className="text-xl font-semibold mb-4">Wallet Information</h2>
+                                            <div className="space-y-2 text-sm md:text-base">
+                                                <p><strong>Status:</strong> <span className="text-green-600 font-semibold">Connected</span></p>
+                                                <p><strong>Network:</strong> {network === parseInt(BSC_TESTNET_CHAIN_ID, 16) ? <span className="text-green-600">BSC Testnet</span> : <span className="text-red-500">Wrong Network</span>}</p>
+                                                <p className="break-all"><strong>Address:</strong> {account}</p>
+                                                <p className="text-2xl font-bold mt-4">Balance: {parseInt(balance).toLocaleString()} IDRD</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {transactions.length > 0 && (
+                                        <div className="card">
+                                            <h2 className="text-2xl font-bold mb-4">Recent Activity</h2>
+                                            <div className="space-y-4">
+                                                {transactions.map((tx, i) => (
+                                                    <div key={i} className="p-3 bg-gray-50 rounded-lg text-xs">
+                                                        <p><strong>Type:</strong> <span className={`font-semibold ${tx.type === 'Mint' ? 'text-green-600' : tx.type === 'Burn' ? 'text-red-600' : 'text-blue-600'}`}>{tx.type}</span></p>
+                                                        <p className="break-all"><strong>From:</strong> {tx.from}</p>
+                                                        <p className="break-all"><strong>To:</strong> {tx.to}</p>
+                                                        <p><strong>Amount:</strong> {parseInt(tx.value).toLocaleString()} IDRD</p>
+                                                        <button onClick={() => handleExplainTransaction(tx)} className="btn btn-ai text-xs mt-2 w-full">✨ Explain Transaction</button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                {/* Right Column */}
+                                <div className="space-y-8">
+                                    {isOwner && (
+                                        <div className="card">
+                                            <h2 className="text-2xl font-bold mb-4">Mint Tokens (Owner)</h2>
+                                            <form onSubmit={handleMint} className="space-y-4">
+                                                <div>
+                                                    <label htmlFor="addressSuggestion" className="font-medium text-gray-700">Recipient Description</label>
+                                                    <div className="flex items-center space-x-2 mt-1">
+                                                        <input id="addressSuggestion" type="text" value={addressSuggestion} onChange={e => setAddressSuggestion(e.target.value)} placeholder="e.g., marketing budget wallet" className="input-field" />
+                                                        <button type="button" onClick={handleSuggestAddress} className="btn btn-ai" disabled={isSuggesting}>{isSuggesting ? '...' : '✨ Suggest'}</button>
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label htmlFor="mintAddress" className="font-medium text-gray-700">Recipient Address</label>
+                                                    <input id="mintAddress" type="text" value={mintAddress} onChange={e => setMintAddress(e.target.value)} placeholder="0x..." className="input-field mt-1" required />
+                                                </div>
+                                                <div>
+                                                    <label htmlFor="mintAmount" className="font-medium text-gray-700">Amount to Mint</label>
+                                                    <input id="mintAmount" type="number" value={mintAmount} onChange={e => setMintAmount(e.target.value)} placeholder="e.g., 100000" className="input-field mt-1" required />
+                                                </div>
+                                                <button type="submit" className="btn btn-primary w-full" disabled={isProcessing || !isOwner}>
+                                                    {isProcessing ? 'Processing...' : 'Mint IDRD'}
+                                                </button>
+                                            </form>
+                                        </div>
+                                    )}
+
+                                    <div className="card">
+                                        <h2 className="text-2xl font-bold mb-4">Redeem Tokens</h2>
+                                        <form onSubmit={handleBurn} className="space-y-4">
+                                            <div>
+                                                <label htmlFor="burnAmount" className="font-medium text-gray-700">Amount to Redeem (Burn)</label>
+                                                <input id="burnAmount" type="number" value={burnAmount} onChange={e => setBurnAmount(e.target.value)} placeholder="e.g., 50000" className="input-field mt-1" required />
+                                            </div>
+                                            <button type="submit" className="btn btn-primary w-full" disabled={isProcessing}>
+                                                {isProcessing ? 'Processing...' : 'Burn IDRD'}
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    </script>
+</body>
+</html>
